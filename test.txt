@@ -1,0 +1,8 @@
+if yasar:
+    yasar = yasar + 12
+    a = 25
+    while a > 12:
+        a = a - 1
+
+osman = 12
+veli = 29 * 12
