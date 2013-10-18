@@ -4,6 +4,34 @@ from Queue import Queue
 class ParseError(Exception):
     pass
 
+class BlockWrapper(object):
+    def __init__(self, stmts, parent):
+        self.stmts = stmts
+        self.parent = parent
+    def write(self):
+        self.parent.outputindentlevel += 1
+        inner = self.stmts.write()
+        self.parent.outputindentlevel -= 1
+        return "{\n%s}\n" % inner
+        
+class ExpressionStatementWrapper(object):
+    
+    def __init__(self, expr):
+        self.expr = expr
+        
+    def write(self):
+        return self.expr.write() + ";"
+        
+        
+class StatementsWrapper(object):
+    def __init__(self, stmts, parent):
+        self.stmts = stmts
+        self.parent = parent
+        
+    def write(self):
+        lvl = self.parent.outputindentlevel
+        return "\n".join(["    " * lvl + x.write() for x in self.stmts])
+
 class BaseSymbol(object):
     id = None
     value = None
@@ -30,6 +58,7 @@ class Parser(object):
         self._sym = {}
         self._prepareSymTable()
         self.token = self._nextToken()
+        self.outputindentlevel = 0
 
 
     def _symbol(self, id, bp=0):
@@ -49,9 +78,11 @@ class Parser(object):
 
     def _prepareSymTable(self):
         
-        def statement(id, std):
+        def statement(id, std, writer=None):
             self._symbol(id).beginStatement = True
             self._symbol(id).std = std
+            if writer:
+                self._symbol(id).write = writer
             
                 
         def infix(id, bp):
@@ -60,6 +91,7 @@ class Parser(object):
                 self.second = self.parent.Expression(bp)
                 return self
             self._symbol(id, bp).led = led
+            self._symbol(id).write = lambda self: self.first.write() + id + self.second.write()
             
         def infixr(id, bp):
             def led(self, left):
@@ -67,6 +99,7 @@ class Parser(object):
                 self.second = self.parent.Expression(bp-1)
                 return self
             self._symbol(id,bp).led = led
+            self._symbol(id).write = lambda self: self.first.write() + id + self.second.write()
 
         def suffix(id, bp):
             def led(self, left):
@@ -82,6 +115,7 @@ class Parser(object):
 
         def literal(id):
             self._symbol(id).nud = lambda self: self
+            self._symbol(id).write = lambda self: str(self.value)
             
         for l in ["NUMBER","FLOAT","NAME"]:
             literal(l)
@@ -91,16 +125,27 @@ class Parser(object):
         
         prefix("+",100); prefix("-",100)
 
-        suffix("++",100); suffix("--",100);
-        prefix("++",100); prefix("--",100)
+        # suffix("++",100); suffix("--",100);
+        # prefix("++",100); prefix("--",100)
         
         infixr("=",20)
 
-        for s in ["END","INDENT","DEDENT",":"]:
+        for s in ["END","INDENT","DEDENT",":","else"]:
             self._symbol(s)
             
         # ignore empty lines
         statement("NEWLINE", lambda self: None)
+        
+        # dull statements
+        statement("continue", lambda self: self, lambda self: "continue;")
+        statement("break", lambda self: self, lambda self: "break;")
+        
+        def printStatement(self):
+            self.first = self.parent.Expression()
+            return self
+            
+        
+        statement("print",printStatement, lambda self: "print %s;" % self.first.write())
 
         
         def ifStatement(self):
@@ -111,8 +156,18 @@ class Parser(object):
             if self.parent.token.id == "else":
                 self.parent._advance(["else"])
                 self.parent._advance([":"])
+                self.parent._advance(["NEWLINE"])
                 self.third = self.parent.Block()
             return self
+            
+        def ifWriter(self):
+            
+            begin = "if (%s)%s" % (self.first.write(), self.second.write())
+            
+            if not self.third:
+                return begin
+            
+            return "%s%selse %s" % (begin, self.parent.outputindentlevel * "    ",self.third.write())
             
         def whileStatement(self):
             self.first = self.parent.Expression()
@@ -121,8 +176,14 @@ class Parser(object):
             self.second = self.parent.Block()
             return self
             
-        statement("if", ifStatement)
-        statement("while", whileStatement)
+        def whileWriter(self):
+            return "while (%s) %s" % (self.first.write(), self.second.write())
+            
+        statement("if", ifStatement, ifWriter)
+        statement("while", whileStatement, whileWriter)
+        
+        # assign a write to each symbol
+        
 
     def _nextToken(self):
         ttype, lineno, tvalue = self._q.get(True, 5) # if we can't get a new token in next 5 secs, raise an exception
@@ -137,7 +198,7 @@ class Parser(object):
         self._advance(["INDENT"])
         stmts = self.Statements()
         self._advance(["DEDENT"])
-        return stmts
+        return BlockWrapper(stmts, self)
 
     def Expression(self, rbp=0):
         t = self.token
@@ -166,10 +227,10 @@ found %r instead. (line: %i)""" % (" ".join(idlist), self.token.id, self.lineno)
         t = self.token
         if t.beginStatement:
             self._advance()
-            return t.std() 
+            return t.std()
         ex = self.Expression(0)
         self._advance(["NEWLINE","END","DEDENT"])
-        return ex
+        return ExpressionStatementWrapper(ex)
         
     def Statements(self):
         statements = []
@@ -179,7 +240,14 @@ found %r instead. (line: %i)""" % (" ".join(idlist), self.token.id, self.lineno)
             s = self.Statement()
             if s:
                 statements.append(s)
-        return statements
+        return StatementsWrapper(statements, self)
+        
+    def parse(self):
+        self.stmts = self.Statements()
+        
+    def output(self):
+        return self.stmts.write()
+        
         
             
         
@@ -195,5 +263,6 @@ if __name__ == "__main__":
     mylexer.start()
 
     myparser = Parser(tokenq)
-
-    print "parse result:",myparser.Statements()
+    
+    myparser.parse()
+    print myparser.output()

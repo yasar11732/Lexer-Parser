@@ -2,7 +2,6 @@
 from Queue import Queue
 from threading import Thread
 from string import ascii_letters, digits
-from syntax_elements import *
 
 class Consumed(Exception):
     pass
@@ -12,7 +11,19 @@ class LexException(Exception):
 
 
 class Lexer(Thread):
-    keywords = ("if","else","or","and","while","for","switch","case")
+    keywords = ("print",
+                "continue",
+                "break",
+                "if",
+                "else",
+                "or",
+                "and",
+                "while",
+                "for",
+                "switch",
+                "case"
+                )
+    
     operators = "+-*/^=~:><"
     def __init__(self,inp, que, name="unnamed lexer"):
         super(Lexer, self).__init__()
